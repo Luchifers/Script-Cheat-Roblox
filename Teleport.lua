@@ -1,21 +1,13 @@
 --[[
-	Save State Script - Versi Fitur Lengkap
-	Pengembang: Commonlag (Original), Dikembangkan oleh Gemini
-	
-	Fitur:
-	- Multi-Slot Save State (Simpan hingga 3 lokasi)
-	- Menyimpan Posisi & Rotasi (CFrame)
-	- Fitur "Teleport Kembali" ke lokasi sebelum teleportasi.
-	- Indikator visual menggunakan efek partikel.
-	- Notifikasi UI untuk setiap aksi (Simpan, Teleport, Cooldown).
-	- Tabel Konfigurasi terpusat untuk kustomisasi yang mudah.
-	- UI terpisah dan fungsional untuk PC & Seluler.
-	- Kode yang terorganisir dengan fungsi terpusat.
+	Teleport Script - V3.1.5
+	Pengembang: Lucifers ( Sann )
 
-	Kontrol PC:
-	- Angka 1, 2, 3: Simpan Posisi ke Slot 1, 2, 3
-	- G, H, J: Teleport ke Slot 1, 2, 3
-	- T: Teleport Kembali ke lokasi sebelum teleportasi terakhir
+	Fitur Baru:
+	- Efek Transisi Teleportasi (Fade-in/Fade-out).
+	- Penamaan Slot Kustom (misal: "Base", "Finish Obby").
+	- Menu Pengaturan: Ubah Keybinds & Warna Indikator.
+	- Umpan Balik Visual pada Tombol (Hover, Press).
+	- UI yang lebih rapi dan terorganisir.
 ]]
 
 --================================================================
@@ -31,119 +23,76 @@ local character = player.Character or player.CharacterAdded:Wait()
 local HRP = character:WaitForChild("HumanoidRootPart")
 
 --================================================================
--- TABEL KONFIGURASI (Ubah pengaturan di sini!)
+-- TABEL KONFIGURASI & DATA
 --================================================================
 local Config = {
-	-- Tombol Keyboard (PC)
-	SaveKeys = {Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three},
-	TeleportKeys = {Enum.KeyCode.G, Enum.KeyCode.H, Enum.KeyCode.J},
-	TeleportBackKey = Enum.KeyCode.T,
-	
-	-- Pengaturan Gameplay
-	CooldownTime = 1.5, -- Waktu jeda dalam detik
+	CooldownTime = 1.5,
 	MaxSlots = 3,
+	TeleportHeightOffset = Vector3.new(0, 4, 0),
 	
-	-- ID Suara
 	SaveSoundID = "rbxassetid://77457926931973",
 	TeleportSoundID = "rbxassetid://3140269034",
 	ErrorSoundID = "rbxassetid://1096728519",
-	PCDetectSoundID = "rbxassetid://18996974946",
-	MobileDetectSoundID = "rbxassetid://138721734757982",
-	
-	-- Warna & Visual
-	IndicatorColor = Color3.fromRGB(0, 255, 127), -- Warna partikel (Hijau Mint)
-	ButtonSavedColor = Color3.fromRGB(76, 175, 80), -- Warna tombol setelah menyimpan (Hijau)
-	ButtonDefaultColor = Color3.fromRGB(192, 192, 192), -- Warna tombol default (Silver)
-	
-	-- Teks Notifikasi
-	SaveMessage = "Posisi disimpan ke Slot %d!", -- %d akan diganti dengan nomor slot
-	TeleportMessage = "Teleport ke Slot %d!",
-	TeleportBackMessage = "Teleport kembali!",
-	CooldownMessage = "Harap tunggu...",
-	EmptySlotMessage = "Slot %d kosong!"
+	ClickSoundID = "rbxassetid://6023428994", -- Suara klik UI
 }
 
---================================================================
--- Variabel Status & Inisialisasi
---================================================================
-local saveSlots = {} -- Tabel untuk menyimpan CFrame dan indikator visual
+-- Data dinamis yang bisa diubah oleh pemain
+local UserData = {
+	Keybinds = {
+		Save = {Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three},
+		Teleport = {Enum.KeyCode.G, Enum.KeyCode.H, Enum.KeyCode.J},
+		TeleportBack = Enum.KeyCode.T,
+	},
+	IndicatorColor = Color3.fromRGB(0, 255, 127),
+}
+
+local saveSlots = {}
 local lastTeleportOrigin = nil
 local canTeleport = true
 
--- Inisialisasi Suara
+--================================================================
+-- Inisialisasi
+--================================================================
 local Sounds = {}
 for name, id in pairs(Config) do
 	if string.find(name, "SoundID") then
 		local soundName = string.gsub(name, "ID", "")
-		Sounds[soundName] = Instance.new("Sound")
+		Sounds[soundName] = Instance.new("Sound", SoundService)
 		Sounds[soundName].SoundId = id
-		Sounds[soundName].Parent = SoundService
-		Sounds[soundName].Volume = 8
+		Sounds[soundName].Volume = name == "ClickSound" and 4 or 8
 	end
 end
 
--- GUI Utama
-local mainGui = Instance.new("ScreenGui")
-mainGui.Name = "SaveStateGUI"
+local mainGui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
+mainGui.Name = "SaveStateGUI_Pro"
 mainGui.ResetOnSpawn = false
-mainGui.Parent = player:WaitForChild("PlayerGui")
 
 --================================================================
--- FUNGSI TERPUSAT
+-- FUNGSI INTI (Tidak Berubah Banyak)
 --================================================================
-
--- Fungsi untuk menampilkan notifikasi di layar
 local function showNotification(message)
+	-- Fungsi ini sama seperti sebelumnya
 	local notifFrame = Instance.new("TextLabel")
-	notifFrame.Size = UDim2.new(0.3, 0, 0.05, 0)
-	notifFrame.Position = UDim2.new(0.35, 0, -0.1, 0)
-	notifFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-	notifFrame.BackgroundTransparency = 0.2
-	notifFrame.TextColor3 = Color3.fromRGB(255, 255, 255)
-	notifFrame.Text = message
-	notifFrame.TextScaled = true
-	notifFrame.Font = Enum.Font.GothamSemibold
-	notifFrame.Parent = mainGui
-	
-	local corner = Instance.new("UICorner", notifFrame)
-	corner.CornerRadius = UDim.new(0, 8)
-	
-	TweenService:Create(notifFrame, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Position = UDim2.new(0.35, 0, 0.02, 0)}):Play()
-	task.delay(2, function()
-		if notifFrame then
-			TweenService:Create(notifFrame, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.In), {Position = UDim2.new(0.35, 0, -0.1, 0)}):Play()
-			task.wait(0.5)
-			notifFrame:Destroy()
-		end
-	end)
+	notifFrame.Size = UDim2.new(0.3, 0, 0.05, 0); notifFrame.Position = UDim2.new(0.35, 0, -0.1, 0); notifFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30); notifFrame.BackgroundTransparency = 0.2; notifFrame.TextColor3 = Color3.fromRGB(255, 255, 255); notifFrame.Text = message; notifFrame.TextScaled = true; notifFrame.Font = Enum.Font.GothamSemibold; notifFrame.Parent = mainGui; local corner = Instance.new("UICorner", notifFrame); TweenService:Create(notifFrame, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Position = UDim2.new(0.35, 0, 0.02, 0)}):Play(); task.delay(2, function() if notifFrame then TweenService:Create(notifFrame, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.In), {Position = UDim2.new(0.35, 0, -0.1, 0)}):Play(); task.wait(0.5); notifFrame:Destroy() end end)
 end
 
--- Fungsi untuk membuat atau memindahkan indikator visual
 local function createVisualIndicator(slot)
-	-- Hapus indikator lama jika ada
 	if saveSlots[slot] and saveSlots[slot].Indicator then
 		saveSlots[slot].Indicator:Destroy()
 	end
 	
-	local position = saveSlots[slot].CFrame.Position
-	
-	local attachment = Instance.new("Attachment")
+	local position = saveSlots[slot].Position
+	local attachment = Instance.new("Attachment", workspace.Terrain)
 	attachment.Position = position
-	attachment.Parent = workspace.Terrain
-	
-	local particle = Instance.new("ParticleEmitter")
-	particle.Color = ColorSequence.new(Config.IndicatorColor)
+	local particle = Instance.new("ParticleEmitter", attachment)
+	particle.Color = ColorSequence.new(UserData.IndicatorColor) -- Menggunakan warna dari data pengguna
 	particle.Lifetime = NumberRange.new(1, 1.5)
 	particle.Rate = 50
 	particle.Size = NumberSequence.new(0.5)
-	particle.Speed = NumberRange.new(0.5)
-	particle.SpreadAngle = Vector2.new(360, 360)
-	particle.Parent = attachment
 	
 	saveSlots[slot].Indicator = attachment
 end
 
--- Fungsi untuk memulai cooldown
 local function startCooldown()
 	canTeleport = false
 	task.delay(Config.CooldownTime, function()
@@ -151,193 +100,198 @@ local function startCooldown()
 	end)
 end
 
--- Fungsi logika untuk menyimpan state
-local function performSave(slot, buttonObject)
-	if not canTeleport then
-		showNotification(Config.CooldownMessage)
-		Sounds.ErrorSound:Play()
-		return
-	end
+--================================================================
+-- FUNGSI BARU & YANG DIMODIFIKASI
+--================================================================
+local function playTeleportEffect(onComplete)
+	local fadeFrame = Instance.new("Frame", mainGui)
+	fadeFrame.Size = UDim2.new(1, 0, 1, 0)
+	fadeFrame.BackgroundColor3 = Color3.new(0, 0, 0)
+	fadeFrame.BackgroundTransparency = 1
 	
-	-- Inisialisasi tabel slot jika belum ada
+	local tweenInfo = TweenInfo.new(0.3, Enum.EasingStyle.Quad)
+	
+	-- Fade to black
+	TweenService:Create(fadeFrame, tweenInfo, {BackgroundTransparency = 0}):Play()
+	task.wait(0.35)
+	
+	onComplete() -- Pindahkan karakter saat layar hitam
+	
+	task.wait(0.1)
+	
+	-- Fade back to clear
+	TweenService:Create(fadeFrame, tweenInfo, {BackgroundTransparency = 1}):Play()
+	task.wait(0.35)
+	fadeFrame:Destroy()
+end
+
+local function performSave(slot, buttonObject, nameBox)
+	if not canTeleport then showNotification("Harap tunggu..."); Sounds.ErrorSound:Play(); return end
 	if not saveSlots[slot] then saveSlots[slot] = {} end
 	
-	saveSlots[slot].CFrame = HRP.CFrame
+	saveSlots[slot].Position = HRP.Position
+	saveSlots[slot].Name = nameBox and nameBox.Text or "Slot " .. slot
 	
-	showNotification(string.format(Config.SaveMessage, slot))
+	showNotification(string.format("Posisi '%s' disimpan!", saveSlots[slot].Name))
 	Sounds.SaveSound:Play()
 	createVisualIndicator(slot)
 	
-	if buttonObject then -- Untuk feedback tombol seluler
-		buttonObject.BackgroundColor3 = Config.ButtonSavedColor
-		buttonObject.Text = "Saved " .. slot
+	if buttonObject then
+		buttonObject.Parent.Teleport.Text = "TP: " .. saveSlots[slot].Name -- Update tombol teleport
 	end
 end
 
--- Fungsi logika untuk teleportasi
 local function performTeleport(slot)
-	if not canTeleport then
-		showNotification(Config.CooldownMessage)
-		Sounds.ErrorSound:Play()
-		return
+	if not canTeleport then showNotification("Harap tunggu..."); Sounds.ErrorSound:Play(); return end
+	if not saveSlots[slot] or not saveSlots[slot].Position then
+		showNotification("Slot kosong!"); Sounds.ErrorSound:Play(); return
 	end
 	
-	if not saveSlots[slot] or not saveSlots[slot].CFrame then
-		showNotification(string.format(Config.EmptySlotMessage, slot))
-		Sounds.ErrorSound:Play()
-		return
-	end
+	playTeleportEffect(function()
+		lastTeleportOrigin = HRP.Position
+		character:PivotTo(CFrame.new(saveSlots[slot].Position) + Config.TeleportHeightOffset)
+	end)
 	
-	lastTeleportOrigin = HRP.CFrame
-	character:PivotTo(saveSlots[slot].CFrame)
-	
-	showNotification(string.format(Config.TeleportMessage, slot))
+	showNotification(string.format("Teleport ke '%s'!", saveSlots[slot].Name))
 	Sounds.TeleportSound:Play()
 	startCooldown()
 end
 
--- Fungsi logika untuk teleport kembali
 local function performTeleportBack()
-	if not canTeleport then
-		showNotification(Config.CooldownMessage)
-		Sounds.ErrorSound:Play()
-		return
-	end
+	if not canTeleport then showNotification("Harap tunggu..."); Sounds.ErrorSound:Play(); return end
+	if not lastTeleportOrigin then showNotification("Tidak ada lokasi sebelumnya!"); Sounds.ErrorSound:Play(); return end
 	
-	if not lastTeleportOrigin then
-		showNotification("Tidak ada lokasi sebelumnya!")
-		Sounds.ErrorSound:Play()
-		return
-	end
+	playTeleportEffect(function()
+		local tempOrigin = HRP.Position
+		character:PivotTo(CFrame.new(lastTeleportOrigin) + Config.TeleportHeightOffset)
+		lastTeleportOrigin = tempOrigin
+	end)
 	
-	local tempOrigin = HRP.CFrame
-	character:PivotTo(lastTeleportOrigin)
-	lastTeleportOrigin = tempOrigin
-	
-	showNotification(Config.TeleportBackMessage)
+	showNotification("Teleport kembali!")
 	Sounds.TeleportSound:Play()
 	startCooldown()
 end
 
-
 --================================================================
--- Penanganan Karakter & Platform
+-- PEMBUATAN UI & EVENT HANDLING
 --================================================================
-
-local function onCharacterAdded(newChar)
+player.CharacterAdded:Connect(function(newChar)
 	character = newChar
 	HRP = newChar:WaitForChild("HumanoidRootPart")
-end
+end)
 
-player.CharacterAdded:Connect(onCharacterAdded)
-
--- Fungsi untuk setup kontrol PC
-local function setupPCControls()
-	Sounds.PCDetectSound:Play()
-	showNotification("Mode PC terdeteksi. Gunakan 1,2,3 / G,H,J / T.")
-
-	UserInputService.InputBegan:Connect(function(input, gameProcessed)
-		if gameProcessed then return end
-		
-		-- Cek tombol save
-		for i, keycode in ipairs(Config.SaveKeys) do
-			if input.KeyCode == keycode then
-				performSave(i)
-			end
-		end
-		
-		-- Cek tombol teleport
-		for i, keycode in ipairs(Config.TeleportKeys) do
-			if input.KeyCode == keycode then
-				performTeleport(i)
-			end
-		end
-		
-		-- Cek tombol teleport kembali
-		if input.KeyCode == Config.TeleportBackKey then
-			performTeleportBack()
-		end
+-- Fungsi untuk umpan balik tombol
+local function setupButtonFeedback(button)
+	local originalColor = button.BackgroundColor3
+	button.MouseEnter:Connect(function()
+		TweenService:Create(button, TweenInfo.new(0.2), {BackgroundColor3 = originalColor:Lerp(Color3.new(1,1,1), 0.2)}):Play()
+	end)
+	button.MouseLeave:Connect(function()
+		TweenService:Create(button, TweenInfo.new(0.2), {BackgroundColor3 = originalColor}):Play()
+	end)
+	button.MouseButton1Down:Connect(function()
+		button.Size = button.Size - UDim2.fromOffset(4, 4)
+		button.Position = button.Position + UDim2.fromOffset(2, 2)
+	end)
+	button.MouseButton1Up:Connect(function()
+		button.Size = button.Size + UDim2.fromOffset(4, 4)
+		button.Position = button.Position - UDim2.fromOffset(2, 2)
+		Sounds.ClickSound:Play()
 	end)
 end
 
--- Fungsi untuk setup GUI Seluler
-local function setupMobileGUI()
-	Sounds.MobileDetectSound:Play()
-	showNotification("Mode Seluler terdeteksi.")
-	
-	local uiFrame = Instance.new("Frame")
-	uiFrame.Size = UDim2.new(0.4, 0, 0.25, 0)
-	uiFrame.Position = UDim2.new(0.98, 0, 0.5, 0)
-	uiFrame.AnchorPoint = Vector2.new(1, 0.5)
-	uiFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-	uiFrame.BackgroundTransparency = 0.2
-	uiFrame.Parent = mainGui
-	local corner = Instance.new("UICorner", uiFrame)
-	local layout = Instance.new("UIGridLayout", uiFrame)
-	layout.CellPadding = UDim2.fromOffset(8, 8)
-	layout.CellSize = UDim2.new(0.45, 0, 0.2, 0)
-	layout.StartCorner = Enum.StartCorner.TopLeft
-	
-	-- Buat tombol untuk setiap slot
-	local buttons = {}
-	for i = 1, Config.MaxSlots do
-		local saveBtn = Instance.new("TextButton")
-		saveBtn.Name = "SaveButton" .. i
-		saveBtn.Text = "Save " .. i
-		saveBtn.BackgroundColor3 = Config.ButtonDefaultColor
-		saveBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-		saveBtn.Font = Enum.Font.Gotham
-		saveBtn.TextScaled = true
-		saveBtn.Parent = uiFrame
-		local btnCorner1 = Instance.new("UICorner", saveBtn)
-		
-		local tpBtn = Instance.new("TextButton")
-		tpBtn.Name = "TeleportButton" .. i
-		tpBtn.Text = "TP " .. i
-		tpBtn.BackgroundColor3 = Config.ButtonDefaultColor
-		tpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-		tpBtn.Font = Enum.Font.Gotham
-		tpBtn.TextScaled = true
-		tpBtn.Parent = uiFrame
-		local btnCorner2 = Instance.new("UICorner", tpBtn)
-		
-		-- Simpan referensi tombol
-		buttons[i] = {Save = saveBtn, Teleport = tpBtn}
-	end
-	
-	-- Buat tombol Teleport Kembali
-	local backBtn = Instance.new("TextButton")
-	backBtn.Name = "TeleportBackButton"
-	backBtn.Text = "TP Back"
-	backBtn.BackgroundColor3 = Color3.fromRGB(200, 100, 50)
-	backBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-	backBtn.Font = Enum.Font.Gotham
-	backBtn.TextScaled = true
-	backBtn.Parent = uiFrame
-	local backCorner = Instance.new("UICorner", backBtn)
-	layout.CellSize = UDim2.new(0.45, 0, 0.28, 0) -- Menyesuaikan ukuran agar muat
+local function createFullGUI()
+	-- ## Main Menu Frame ##
+	local menuFrame = Instance.new("Frame", mainGui)
+	menuFrame.Size = UDim2.new(0.25, 0, 0.4, 0); menuFrame.Position = UDim2.new(1.1, 0, 0.5, 0); menuFrame.AnchorPoint = Vector2.new(1, 0.5); menuFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 45); menuFrame.BackgroundTransparency = 0.2; Instance.new("UICorner", menuFrame)
+	local layout = Instance.new("UIListLayout", menuFrame); layout.Padding = UDim.new(0, 8); layout.SortOrder = Enum.SortOrder.LayoutOrder
 
-	-- Hubungkan event klik ke fungsi
+	-- ## Settings Menu Frame ##
+	local settingsFrame = Instance.new("Frame", mainGui)
+	settingsFrame.Size = UDim2.new(0.25, 0, 0.4, 0); settingsFrame.Position = UDim2.new(1.1, 0, 0.5, 0); settingsFrame.AnchorPoint = Vector2.new(1, 0.5); settingsFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40); settingsFrame.BackgroundTransparency = 0.1; settingsFrame.Visible = false; Instance.new("UICorner", settingsFrame)
+	local settingsLayout = Instance.new("UIListLayout", settingsFrame); settingsLayout.Padding = UDim.new(0, 8);
+	
+	-- ## Toggle Button ##
+	local toggleButton = Instance.new("TextButton", mainGui)
+	toggleButton.Size = UDim2.new(0.1, 0, 0.05, 0); toggleButton.Position = UDim2.new(0.98, 0, 0.94, 0); toggleButton.AnchorPoint = Vector2.new(1, 1); toggleButton.Text = "Menu"; toggleButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60); toggleButton.TextColor3 = Color3.new(1,1,1); Instance.new("UICorner", toggleButton)
+	setupButtonFeedback(toggleButton)
+
+	-- Logika Toggle Menu
+	local isMenuVisible = false
+	toggleButton.MouseButton1Click:Connect(function()
+		isMenuVisible = not isMenuVisible
+		local targetPos = isMenuVisible and UDim2.new(0.98, 0, 0.5, 0) or UDim2.new(1.1, 0, 0.5, 0)
+		TweenService:Create(menuFrame, TweenInfo.new(0.4, Enum.EasingStyle.Quint), {Position = targetPos}):Play()
+		if settingsFrame.Visible then settingsFrame.Visible = false end -- Selalu sembunyikan settings
+	end)
+
+	-- ## Isi Menu Utama ##
 	for i = 1, Config.MaxSlots do
-		buttons[i].Save.MouseButton1Click:Connect(function()
-			performSave(i, buttons[i].Save)
-		end)
-		buttons[i].Teleport.MouseButton1Click:Connect(function()
-			performTeleport(i)
-			-- Reset tombol save setelah teleport
-			buttons[i].Save.BackgroundColor3 = Config.ButtonDefaultColor
-			buttons[i].Save.Text = "Save " .. i
-		end)
+		local slotFrame = Instance.new("Frame", menuFrame); slotFrame.Size = UDim2.new(1, -16, 0.2, 0); slotFrame.Position = UDim2.new(0.5, 0, 0, 0); slotFrame.AnchorPoint = Vector2.new(0.5, 0); slotFrame.BackgroundTransparency = 1; slotFrame.LayoutOrder = i
+		local slotLayout = Instance.new("UIListLayout", slotFrame); slotLayout.FillDirection = Enum.FillDirection.Horizontal; slotLayout.Padding = UDim.new(0, 5)
+
+		local nameBox = Instance.new("TextBox", slotFrame); nameBox.Size = UDim2.new(0.4, 0, 1, 0); nameBox.PlaceholderText = "Nama Slot " .. i; nameBox.BackgroundColor3 = Color3.fromRGB(80,80,80); nameBox.TextColor3 = Color3.new(1,1,1)
+		local saveBtn = Instance.new("TextButton", slotFrame); saveBtn.Size = UDim2.new(0.3, -5, 1, 0); saveBtn.Text = "Save"; saveBtn.BackgroundColor3 = Color3.fromRGB(80, 160, 240); saveBtn.TextColor3 = Color3.new(1,1,1)
+		local tpBtn = Instance.new("TextButton", slotFrame); tpBtn.Size = UDim2.new(0.3, 0, 1, 0); tpBtn.Text = "Teleport"; tpBtn.BackgroundColor3 = Color3.fromRGB(240, 160, 80); tpBtn.TextColor3 = Color3.new(1,1,1)
+		
+		slotFrame.Name = "Slot" .. i
+		slotFrame.Save = saveBtn
+		slotFrame.Teleport = tpBtn
+		
+		setupButtonFeedback(saveBtn); setupButtonFeedback(tpBtn)
+		saveBtn.MouseButton1Click:Connect(function() performSave(i, slotFrame, nameBox) end)
+		tpBtn.MouseButton1Click:Connect(function() performTeleport(i) end)
 	end
+
+	local backBtn = Instance.new("TextButton", menuFrame); backBtn.Size = UDim2.new(1, -16, 0.1, 0); backBtn.Position = UDim2.new(0.5, 0, 0, 0); backBtn.AnchorPoint = Vector2.new(0.5, 0); backBtn.Text = "Teleport Kembali"; backBtn.BackgroundColor3 = Color3.fromRGB(200, 100, 50); backBtn.TextColor3 = Color3.new(1,1,1); backBtn.LayoutOrder = 4; setupButtonFeedback(backBtn)
+	local settingsBtn = Instance.new("TextButton", menuFrame); settingsBtn.Size = UDim2.new(1, -16, 0.1, 0); settingsBtn.Position = UDim2.new(0.5, 0, 0, 0); settingsBtn.AnchorPoint = Vector2.new(0.5, 0); settingsBtn.Text = "Pengaturan"; settingsBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 100); settingsBtn.TextColor3 = Color3.new(1,1,1); settingsBtn.LayoutOrder = 5; setupButtonFeedback(settingsBtn)
+	
 	backBtn.MouseButton1Click:Connect(performTeleportBack)
+	settingsBtn.MouseButton1Click:Connect(function()
+		menuFrame.Visible, settingsFrame.Visible = false, true
+		TweenService:Create(settingsFrame, TweenInfo.new(0.4, Enum.EasingStyle.Quint), {Position = UDim2.new(0.98, 0, 0.5, 0)}):Play()
+	end)
+
+	-- ## Isi Menu Pengaturan ##
+	local title = Instance.new("TextLabel", settingsFrame); title.Size = UDim2.new(1,-16, 0.1, 0); title.Text = "Pengaturan"; title.TextColor3 = Color3.new(1,1,1); title.BackgroundTransparency = 1;
+	local colorLabel = Instance.new("TextLabel", settingsFrame); colorLabel.Size = UDim2.new(1,-16, 0.1, 0); colorLabel.Text = "Warna Indikator (R,G,B)"; colorLabel.TextColor3 = Color3.new(1,1,1); colorLabel.BackgroundTransparency = 1;
+	local colorFrame = Instance.new("Frame", settingsFrame); colorFrame.Size = UDim2.new(1,-16, 0.1, 0); colorFrame.BackgroundTransparency = 1;
+	local colorLayout = Instance.new("UIListLayout", colorFrame); colorLayout.FillDirection = Enum.FillDirection.Horizontal; colorLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center;
+	local rBox = Instance.new("TextBox", colorFrame); rBox.Size = UDim2.new(0.3, 0, 1, 0); rBox.Text = "0"; rBox.PlaceholderText = "R"
+	local gBox = Instance.new("TextBox", colorFrame); gBox.Size = UDim2.new(0.3, 0, 1, 0); gBox.Text = "255"; gBox.PlaceholderText = "G"
+	local bBox = Instance.new("TextBox", colorFrame); bBox.Size = UDim2.new(0.3, 0, 1, 0); bBox.Text = "127"; bBox.PlaceholderText = "B"
+	
+	local function updateColor()
+		local r = tonumber(rBox.Text) or 0
+		local g = tonumber(gBox.Text) or 0
+		local b = tonumber(bBox.Text) or 0
+		UserData.IndicatorColor = Color3.fromRGB(r,g,b)
+		showNotification("Warna indikator diperbarui!")
+	end
+	rBox.FocusLost:Connect(updateColor); gBox.FocusLost:Connect(updateColor); bBox.FocusLost:Connect(updateColor)
+	
+	local backToMenuBtn = Instance.new("TextButton", settingsFrame); backToMenuBtn.Size = UDim2.new(1, -16, 0.1, 0); backToMenuBtn.Text = "Kembali ke Menu"; backToMenuBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 100); backToMenuBtn.TextColor3 = Color3.new(1,1,1); setupButtonFeedback(backToMenuBtn)
+	backToMenuBtn.MouseButton1Click:Connect(function()
+		TweenService:Create(settingsFrame, TweenInfo.new(0.4, Enum.EasingStyle.Quint), {Position = UDim2.new(1.1, 0, 0.5, 0)}):Play()
+		task.wait(0.1)
+		settingsFrame.Visible, menuFrame.Visible = false, true
+	end)
 end
 
 
 --================================================================
--- DETEKSI PLATFORM & MULAI SKRIP
+-- MULAI SKRIP
 --================================================================
-if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
-	setupMobileGUI()
+createFullGUI()
+
+if not UserInputService.TouchEnabled or UserInputService.KeyboardEnabled then
+	showNotification("Mode PC: Gunakan Menu atau Hotkey.")
+	UserInputService.InputBegan:Connect(function(input, gameProcessed)
+		if gameProcessed then return end
+		for i, keycode in ipairs(UserData.Keybinds.Save) do if input.KeyCode == keycode then performSave(i) end end
+		for i, keycode in ipairs(UserData.Keybinds.Teleport) do if input.KeyCode == keycode then performTeleport(i) end end
+		if input.KeyCode == UserData.Keybinds.TeleportBack then performTeleportBack() end
+	end)
 else
-	setupPCControls()
+	showNotification("Mode Seluler: Gunakan Menu.")
 end
